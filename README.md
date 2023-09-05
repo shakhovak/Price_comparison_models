@@ -143,3 +143,192 @@
 
 #### Этап 3.2. Анализ цен на похожие товары для всей категории.
  
+ Подготовим функцию, которая будем принимать датафреймы с исходными данными, данные конкурентов, их векторные формы и выбранныый индекс похожести и выводить на основе полученных данных график, где будет показана текущая цена в сравнении с минимальной и максимальной ценой по похожим товарам **(более детально - код по ссылке ниже)**.
+
+ Дополнительно посмотрим, какой процент артикулов во всей категории оказался без аналогов (т.е. идекс похожести ниже выбранного уровня).
+
+ > [!IMPORTANT]
+> **Индекс похожести будем брать от 0.79 и выше, как выяснили на предыдущем этапе.**
+
+<hr>
+<details>
+  <summary>Code details - click to open</summary>
+
+ ```python 
+ def market_review(data, competitors, data_vect, competitors_vect, sim_threshhold):
+        """data - dataframe with own products
+       competitors - dataframe with competitors' products
+       data_vect - data in vectorized form
+       competitors_vect - competitors data in vectorized form
+       sim_threshhold - min similarity score to be inlcuded in recommendation"""
+
+    avg_score_lst = []
+    price_max_lst = []
+    price_min_lst = []
+    rec = data.copy()
+    data_emb = sparse.csr_matrix(data_vect)
+    competitors_emb = sparse.csr_matrix(competitors_vect)
+    
+    for item in range(len(data)):
+        similarity = cosine_similarity(data_emb[item], competitors_emb).flatten()
+        ind = np.argwhere(similarity > sim_threshhold)
+        if ind.shape[0] == 0:
+            avg_score_lst.append(0)
+            price_max_lst.append(0)
+            price_min_lst.append(0)
+        else:
+            scores = similarity[similarity > sim_threshhold]
+            match = sorted(zip(scores, ind.tolist()), reverse=True)
+            avg_score = round(sum(i for i,j in match)/len(match), 2)
+            avg_score_lst.append(avg_score)
+            price_max = competitors.iloc[[j[0] for i, j in match]]['price'].max()
+            price_max_lst.append(price_max)
+            price_min = competitors.iloc[[j[0] for i, j in match]]['price'].min()
+            price_min_lst.append(price_min)
+    
+    zeros =  avg_score_lst.count(0)      
+    rec['avg_sim_score'] = avg_score_lst
+    rec['price_max'] = price_max_lst
+    rec['price_min'] = price_min_lst
+    rec = rec.sort_values(by = 'price_max')
+    
+    plt.figure(figsize = [10,4])
+    plt.fill_between(y1 = rec['price_max'],
+                     y2 = rec['price_min'],
+                    x = np.linspace(0,len(rec), num = len(rec)).astype(int),
+                    alpha = 0.4,
+                    label = 'Max/min intervals')
+    sns.scatterplot(x = np.linspace(0,len(rec), num = len(rec)).astype(int),
+                  y = rec['price'], label = 'Current Price')
+
+    plt.legend(loc = 'best')
+    plt.ylim(0,200000)
+    plt.title(f"Sampling review with avg_sim_score = {round(rec['avg_sim_score'].mean(), 2)}, n_items with 0 score = {round(zeros/len(rec)*100)}%")
+    plt.show()
+```
+</details>
+<hr>
+
+Итак, похожие товары отобраны для каждого артикула в категории, для них определены максимальные и минимальные цены. Все данные на графиках отсортированы по возрастанию максимальной цены похожих товаров.
+Для индекса 0.79 интереснее всего получились результаты для векторов только с названием и со всеми данными. Мы можем наблюдать, что растет и фактическая цена вмести с максимальной по рынку. 
+
+![Alt text](images/image-14.png)
+
+Здесь ситуация хуже и очень много артикулов остались без аналогов.
+
+![Alt text](images/image-15.png)
+
+А вот последний вариант выглядит даже очень прилично. При этом разница между максимальной и минимальнйо ценой на похожие здесь меньше всего.
+
+![Alt text](images/image-16.png)
+
+При этом, если уменьшать пороговое значение индекса похожести, то аналоги находятся практически для всех артикулов, но увелчивается разница между минимальным и максимальным значениями, что заставляет сомневаться в корректности подобранных похожих товаров. Мое ожидание  - цены на похожие товары не должны сильно различаться :money_mouth_face:
+
+Пример для векторов с максимальной информацией и индеком похожести 0.75
+![Alt text](images/image-17.png)
+
+> **Общий вывод:**
+При анализе всей категории нужно использовать доволно высокие значения уровня похожести, чтобы получить приемлимые результаты. Такой анализ также позволяет выявить уникальные товары и оценить качество исходной выборки.
+
+#### Этап 3.3. Прогнозирование цены на основании описания и поиска похожих.
+
+Итак, поиск похожих на основе векторного представления товаров позволяет искать рекомендации для конкретного артикула и сравнивать всю категорию с выборкой товаров конкурнетов, но хотелось бы научиться получать рекомендуемую цену для артикула на основе анализа похожик товаров.
+
+Для этого обучим модель на основе данных конкурентов предсказывать цену по текстовому описанию. Будем экспериментировать также на разных векторных представлениях товаров и попробуем разные методы бустинга. Для этого воспользуемся функцией, которая будет принимать в качестве параметров модель, данные для анализа и их векторные представления, данные конкурентов и их векторные представления, а также пороговое значение индекса похожести **(более детально - код по ссылке ниже)**.
+
+**Пороговое значение** индекса похожести будет использоваться для формирования обучающей выборке для модели.
+
+
+<hr>
+<details>
+  <summary>Code details - click to open</summary>
+
+ ```python 
+ def group_price_pred(model, data, competitors, data_vect, competitors_vect, sim_threshhold):
+            """data - dataframe with own products
+       competitors - dataframe with competitors' products
+       data_vect - data in vectorized form
+       competitors_vect - competitors data in vectorized form
+       sim_threshhold - min similarity score to be inlcuded in recommendation"""
+
+    similar_items = []
+    scores_total = []
+    gr = data.copy()
+    data_emb = sparse.csr_matrix(data_vect)
+    competitors_emb = sparse.csr_matrix(competitors_vect)
+    
+    for item in range(len(data)):
+        similarity = cosine_similarity(data_emb[item], competitors_emb).flatten()
+        ind = np.argwhere(similarity > sim_threshhold)
+        if ind.shape[0] == 0:
+            pass
+        else:
+            scores = similarity[similarity > sim_threshhold]
+            scores_total.extend(scores)
+            flat_list = [item for sublist in ind.tolist() for item in sublist]
+            similar_items.extend(flat_list)
+    group_ind = set(similar_items)
+    
+    group_avg_score = round(sum(scores_total)/len(scores_total),2)
+    
+    print(f'Total similar items for the group = {len(group_ind)}')
+    
+    if len(group_ind) <= len(data):
+        print('Similar group is too small, prediction not possible!')
+    else:
+        X = competitors_emb[list(group_ind)]
+        y = competitors['price'][list(group_ind)]
+        X_train, X_test, y_train, y_test = train_test_split(X,y, test_size = 0.2, random_state = 42)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        RMSE = round(np.sqrt(mean_squared_error(y_test, y_pred)),2)
+        new_row = {'RMSE':round(np.sqrt(mean_squared_error(y_test, y_pred)),2),
+                   'R2_score': round(r2_score(y_test, y_pred),4)}
+        
+        print(f'Log: training done, results: {new_row}')
+        
+        X_val = data_emb
+        y_val = model.predict(X_val)
+        gr['pred_price'] = y_val
+        
+        gr = gr.sort_values(by = 'price')
+        
+        plt.figure(figsize = [10,4])
+        plt.fill_between(y1 = gr['pred_price'] - RMSE,
+                             y2 = gr['pred_price'] + RMSE,
+                            x = np.linspace(0,len(gr), num = len(gr)).astype(int),
+                            alpha = 0.2,
+                            label = 'Conf intervals')
+        sns.scatterplot(x = np.linspace(0,len(gr), num = len(gr)).astype(int),
+                      y = gr['pred_price'], label = 'Prediction')
+        sns.scatterplot(x = np.linspace(0,len(gr), num = len(gr)).astype(int),
+                      y = gr['price'], label = 'Current Price')
+        plt.legend(loc = 'best')
+        plt.ylim(0,200000)
+        plt.title(f'Price prediction based on similarity score, group_avg = {group_avg_score}, RMSE = {RMSE}')
+        plt.show()
+```
+</details>
+<hr>
+
+Сперва поставим уровень похожести от 0 и выше, т.е. обучим CatBoostRegressor на всей выборке конкурентов.
+Результаты расстраивают, причем для всех вариантов векторов - очень большая RMSE и предсказнные цены далеки от реальных.
+
+![Alt text](images/image-18.png)
+
+ > [!IMPORTANT]
+> **Попробуем отфильтровать обучающую выборку, выбрав пороговое значение 0.79 для критеря отбора. Воспользуемся несколькими моделями CatBoostRegressor, XGBRFRegressor  и LGBMRegressor**
+
+Получилось намного лучше - RMSE ниже и предсказанные цены намного ближе к реальным ценам, используемым в интернет-магазине. Лучше всего получилось у  CatBoostRegressor для векторов, построенных только на названии и с полным набором информации. Для ряда комбинаций вообще не получилось сделать предсказание цены, так как обучающая выборка после фильтрации оказалась меньше исходного массива данных.
+
+**Предсказание цены для модели CatBoostRegressor для индекса похожести 0,79 и выше**
+![Alt text](images/image-19.png)
+![Alt text](images/image-20.png)
+![Alt text](images/image-21.png)
+
+> **Общий вывод:**
+В целом по векторному представлению слов возможно предсказывать рекомендуемую цену товара, но при этом необходимо обеспечить достаточное представление товара в выборках конкурентов. 
+
+На этом пока все :stuck_out_tongue_winking_eye:
+
+![Alt text](images/image-22.png)
