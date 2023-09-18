@@ -306,7 +306,7 @@
 
 > **Сводный вывод:**
  
-![image](https://github.com/shakhovak/Price_comparison_models/assets/89096305/fefc7fda-6210-437f-b783-caee1b16e8c0)
+![image](https://github.com/shakhovak/Price_comparison_models/assets/89096305/5d49abba-7476-4f72-ac89-9be957ab59f1)
 
 Визуализация сводных данных для лучшего алгоритма:
 ![Alt text](images/image-12.png)
